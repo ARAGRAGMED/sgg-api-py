@@ -8,9 +8,11 @@ FastAPI implementation of the SGG API that surfaces Moroccan Bulletin Officiel m
 
 - GET `/api/BO/FR`: Latest French bulletin metadata
 - GET `/api/BO/ALL/FR`: All French bulletins metadata
+  - Query: `year` optional (e.g., `year=2024` or `year=current`)
 - GET `/api/BO/Text/FR`: Full text of the latest French bulletin
 - GET `/api/BO/AR`: Latest Arabic bulletin metadata
 - GET `/api/BO/ALL/AR`: All Arabic bulletins metadata
+  - Query: `year` optional (e.g., `year=2024` or `year=current`)
 - GET `/api/BO/Text/AR`: Full text of the latest Arabic bulletin
 - GET `/api/health`: Health check
 
@@ -56,8 +58,11 @@ curl "http://127.0.0.1:3003/api/health"
 # Latest French metadata
 curl "http://127.0.0.1:3003/api/BO/FR"
 
-# All Arabic metadata (first item)
-curl "http://127.0.0.1:3003/api/BO/ALL/AR"
+# All Arabic metadata this year
+curl "http://127.0.0.1:3003/api/BO/ALL/AR?year=current"
+
+# All French metadata for 2024
+curl "http://127.0.0.1:3003/api/BO/ALL/FR?year=2024"
 
 # Full text (French) – prints first 300 chars
 curl "http://127.0.0.1:3003/api/BO/Text/FR" | python -c 'import sys,json;print(json.load(sys.stdin)["text"][:300])'

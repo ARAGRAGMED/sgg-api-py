@@ -1,10 +1,11 @@
 from typing import Optional, Dict, Any, List
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 import httpx
 import os
 import re
+import datetime
 
 app = FastAPI(title="Bulletin Officiel API (Python)")
 
@@ -16,8 +17,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SCRAPER_BASE = os.getenv("SCRAPER_API_BASE", "https://scraper-api-py.vercel.app")
-PDF2TEXT_BASE = os.getenv("PDF2TEXT_BASE", "https://pdf2text-api-py.vercel.app")
+SCRAPER_BASE = os.getenv("SCRAPER_API_BASE", "https://aicrafters-scraper-api.vercel.app")
+PDF2TEXT_BASE = os.getenv("PDF2TEXT_BASE", "https://pdf2text-umber.vercel.app")
 
 SGG_AJAX_URL = "https://www.sgg.gov.ma/DesktopModules/MVC/TableListBO/BO/AjaxMethod"
 
@@ -59,7 +60,6 @@ def parse_bo_item(raw: Dict[str, Any]) -> Dict[str, Any]:
         try:
             ms = int(ms_match.group(0))
             # Convert ms to ISO string
-            import datetime
             iso_date = datetime.datetime.utcfromtimestamp(ms / 1000.0).isoformat() + "Z"
         except Exception:
             iso_date = None
@@ -74,6 +74,36 @@ def parse_bo_item(raw: Dict[str, Any]) -> Dict[str, Any]:
         "BoDate": iso_date,
         "BoUrl": bo_url,
     }
+
+
+def filter_by_year(items: List[Dict[str, Any]], year_param: Optional[str]) -> List[Dict[str, Any]]:
+    if not year_param:
+        return items
+
+    # Resolve target year
+    target_year: Optional[int] = None
+    if isinstance(year_param, str):
+        if year_param.lower() == "current":
+            target_year = datetime.datetime.utcnow().year
+        else:
+            try:
+                target_year = int(year_param)
+            except ValueError:
+                raise HTTPException(status_code=400, detail={"error": "Invalid year parameter"})
+    else:
+        return items
+
+    filtered: List[Dict[str, Any]] = []
+    for it in items:
+        bo_date = it.get("BoDate")
+        if not bo_date or len(bo_date) < 4:
+            continue
+        try:
+            if int(bo_date[:4]) == target_year:
+                filtered.append(it)
+        except Exception:
+            continue
+    return filtered
 
 
 async def fetch_latest_bo(lang: str, fallback_module: str, fallback_tab: str) -> Optional[Dict[str, Any]]:
@@ -123,11 +153,14 @@ async def api_bo_fr():
 
 
 @app.get("/api/BO/ALL/FR")
-async def api_bo_all_fr():
+async def api_bo_all_fr(year: Optional[str] = Query(None, description="Filter by year (e.g., 2024) or 'current'")):
     arr = await fetch_all_bo(lang="fr", fallback_module="2873", fallback_tab="775")
     if not arr:
         raise HTTPException(status_code=404, detail={"error": "No French Bulletin Officiel was found"})
-    return arr
+    filtered = filter_by_year(arr, year)
+    if year and not filtered:
+        raise HTTPException(status_code=404, detail={"error": f"No French Bulletin Officiel found for year {year}"})
+    return filtered
 
 
 @app.get("/api/BO/AR")
@@ -139,11 +172,14 @@ async def api_bo_ar():
 
 
 @app.get("/api/BO/ALL/AR")
-async def api_bo_all_ar():
+async def api_bo_all_ar(year: Optional[str] = Query(None, description="Filter by year (e.g., 2024) or 'current'")):
     arr = await fetch_all_bo(lang="ar", fallback_module="3111", fallback_tab="847")
     if not arr:
         raise HTTPException(status_code=404, detail={"error": "No Arabic Bulletin Officiel was found"})
-    return arr
+    filtered = filter_by_year(arr, year)
+    if year and not filtered:
+        raise HTTPException(status_code=404, detail={"error": f"No Arabic Bulletin Officiel found for year {year}"})
+    return filtered
 
 
 async def extract_pdf_text(pdf_url: str) -> str:
@@ -183,7 +219,7 @@ async def health():
 
 @app.get("/")
 async def root():
-    # Serve the rich index page from the original project inline for simplicity
+    # Serve a minimal index page
     return HTMLResponse(content="""
     <!DOCTYPE html>
     <html><head><meta charset=\"utf-8\"><title>Bulletin Officiel API (Python)</title></head>
@@ -192,13 +228,12 @@ async def root():
       <p>Endpoints:</p>
       <ul>
         <li>GET <code>/api/BO/FR</code></li>
-        <li>GET <code>/api/BO/ALL/FR</code></li>
+        <li>GET <code>/api/BO/ALL/FR?year=current</code> or <code>?year=2024</code></li>
         <li>GET <code>/api/BO/Text/FR</code></li>
         <li>GET <code>/api/BO/AR</code></li>
-        <li>GET <code>/api/BO/ALL/AR</code></li>
+        <li>GET <code>/api/BO/ALL/AR?year=current</code> or <code>?year=2024</code></li>
         <li>GET <code>/api/BO/Text/AR</code></li>
         <li>GET <code>/api/health</code></li>
       </ul>
-      <p>Set env <code>SCRAPER_API_BASE</code> and <code>PDF2TEXT_BASE</code> to override defaults.</p>
     </body></html>
     """)
