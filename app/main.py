@@ -18,7 +18,7 @@ app.add_middleware(
 )
 
 SCRAPER_BASE = os.getenv("SCRAPER_API_BASE", "https://aicrafters-scraper-api.vercel.app")
-PDF2TEXT_BASE = os.getenv("PDF2TEXT_BASE", "https://pdf2text-umber.vercel.app")
+PDF2TEXT_BASE = os.getenv("PDF2TEXT_BASE", "https://pdf2text-api-py.vercel.app")
 
 SGG_AJAX_URL = "https://www.sgg.gov.ma/DesktopModules/MVC/TableListBO/BO/AjaxMethod"
 
