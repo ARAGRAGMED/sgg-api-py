@@ -4,17 +4,51 @@ FastAPI implementation of the SGG API that surfaces Moroccan Bulletin Officiel m
 
 - Original inspiration: `mounseflit/SGG-API` (Node/Express)
 
-## Endpoints
+## Security & Access Control
 
-- GET `/api/BO/FR`: Latest French bulletin metadata
-- GET `/api/BO/ALL/FR`: All French bulletins metadata
-  - Query: `year` optional (e.g., `year=2024` or `year=current`)
-- GET `/api/BO/Text/FR`: Full text of the latest French bulletin
-- GET `/api/BO/AR`: Latest Arabic bulletin metadata
-- GET `/api/BO/ALL/AR`: All Arabic bulletins metadata
-  - Query: `year` optional (e.g., `year=2024` or `year=current`)
-- GET `/api/BO/Text/AR`: Full text of the latest Arabic bulletin
-- GET `/api/health`: Health check
+### **API Key Protection**
+Endpoints that fetch data directly from external websites (SGG) are protected with API key authentication to prevent abuse and rate limiting issues.
+
+**Setup:**
+1. Copy `env.template` to `.env`
+2. Set your `INTERNAL_API_KEY` in the `.env` file
+3. Restart the application
+
+**Usage:**
+```bash
+# Include API key in Authorization header
+curl -H "Authorization: Bearer your-secret-api-key-here" \
+     http://localhost:3003/api/BO/FR/internal
+```
+
+### **Endpoint Categories**
+
+#### **🔓 Public Endpoints** (No API key required)
+- `GET /api/health` - Health check
+- `GET /api/database` - Local database content
+- `GET /api/database/public` - Local database content (alias)
+- `GET /api/BO/local/FR` - French BOs from local database
+- `GET /api/BO/local/AR` - Arabic BOs from local database
+- `GET /api/database/status` - Database status and statistics
+- `GET /api/database/test` - Test database structure
+
+#### **🔐 Internal Endpoints** (API key required)
+- `GET /api/BO/FR` - Latest French bulletin metadata (direct from SGG)
+- `GET /api/BO/FR/internal` - Latest French bulletin metadata (direct from SGG)
+- `GET /api/BO/ALL/FR` - All French bulletins metadata (direct from SGG)
+- `GET /api/BO/ALL/FR/internal` - All French bulletins metadata (direct from SGG)
+- `GET /api/BO/AR` - Latest Arabic bulletin metadata (direct from SGG)
+- `GET /api/BO/AR/internal` - Latest Arabic bulletin metadata (direct from SGG)
+- `GET /api/BO/ALL/AR` - All Arabic bulletins metadata (direct from SGG)
+- `GET /api/BO/ALL/AR/internal` - All Arabic bulletins metadata (direct from SGG)
+- `GET /api/BO/Text/FR` - Full text of latest French bulletin (direct from SGG)
+- `GET /api/BO/Text/FR/internal` - Full text of latest French bulletin (direct from SGG)
+- `GET /api/BO/Text/AR` - Full text of latest Arabic bulletin (direct from SGG)
+- `GET /api/BO/Text/AR/internal` - Full text of latest Arabic bulletin (direct from SGG)
+- `GET /api/database/refresh` - Refresh database from SGG
+- `GET /api/database/refresh/internal` - Refresh database from SGG (with API key)
+
+**Note:** Internal endpoints make direct requests to external websites and should be used sparingly to avoid rate limiting.
 
 Response shape (example):
 ```json
@@ -32,7 +66,10 @@ Response shape (example):
 
 ## Environment variables
 
-- `SCRAPER_API_BASE` (default: `https://scraper-api-py.vercel.app`)
+- `INTERNAL_API_KEY` (required for internal endpoints)
+  - Secret key for accessing endpoints that fetch data directly from SGG
+  - Set this in your `.env` file (copy from `env.template`)
+- `SCRAPER_API_BASE` (default: `https://aicrafters-scraper-api.vercel.app`)
   - Used to fetch page scripts to derive `ModuleId` and `TabId` dynamically
 - `PDF2TEXT_BASE` (default: `https://pdf2text-api-py.vercel.app`)
   - Used to extract text content from bulletin PDFs
@@ -51,21 +88,45 @@ Open `http://127.0.0.1:3003/api/health`.
 
 ## Quick examples
 
+### **Public Endpoints** (No API key required)
 ```bash
-# Health
+# Health check
 curl "http://127.0.0.1:3003/api/health"
 
-# Latest French metadata
-curl "http://127.0.0.1:3003/api/BO/FR"
+# Local database content
+curl "http://127.0.0.1:3003/api/database"
 
-# All Arabic metadata this year
-curl "http://127.0.0.1:3003/api/BO/ALL/AR?year=current"
+# French BOs from local database (2024)
+curl "http://127.0.0.1:3003/api/BO/local/FR?year=2024"
 
-# All French metadata for 2024
-curl "http://127.0.0.1:3003/api/BO/ALL/FR?year=2024"
+# Arabic BOs from local database (current year)
+curl "http://127.0.0.1:3003/api/BO/local/AR?year=current"
+
+# Database status
+curl "http://127.0.0.1:3003/api/database/status"
+```
+
+### **Internal Endpoints** (API key required)
+```bash
+# Set your API key
+export API_KEY="your-secret-api-key-here"
+
+# Latest French metadata (direct from SGG)
+curl -H "Authorization: Bearer $API_KEY" \
+     "http://127.0.0.1:3003/api/BO/FR/internal"
+
+# All Arabic metadata this year (direct from SGG)
+curl -H "Authorization: Bearer $API_KEY" \
+     "http://127.0.0.1:3003/api/BO/ALL/AR/internal?year=current"
 
 # Full text (French) – prints first 300 chars
-curl "http://127.0.0.1:3003/api/BO/Text/FR" | python -c 'import sys,json;print(json.load(sys.stdin)["text"][:300])'
+curl -H "Authorization: Bearer $API_KEY" \
+     "http://127.0.0.1:3003/api/BO/Text/FR/internal" | \
+     python -c 'import sys,json;print(json.load(sys.stdin)["text"][:300])'
+
+# Refresh database from SGG
+curl -H "Authorization: Bearer $API_KEY" \
+     "http://127.0.0.1:3003/api/database/refresh/internal"
 ```
 
 ## Deployment (Vercel)

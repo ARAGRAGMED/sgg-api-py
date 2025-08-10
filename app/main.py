@@ -21,7 +21,7 @@ app.add_middleware(
 
 # Security setup
 security = HTTPBearer(auto_error=False)
-API_KEY = os.getenv("INTERNAL_API_KEY", "your-secret-api-key-here")
+API_KEY = os.getenv("INTERNAL_API_KEY", "TESTAPIKEY")
 
 async def verify_api_key(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> bool:
     """Verify API key for internal endpoints"""
