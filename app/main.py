@@ -1071,6 +1071,60 @@ async def refresh_database_internal(api_key: bool = Depends(require_api_key)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
+@app.get("/api/test-proxy")
+async def test_proxy():
+    """Test proxy functionality with free proxy services"""
+    import httpx
+    
+    # Test 1: Direct access (should fail from Vercel)
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get("https://www.sgg.gov.ma/BulletinOfficiel.aspx")
+            direct_status = response.status_code
+            direct_content = len(response.text) if response.status_code == 200 else "Failed"
+    except Exception as e:
+        direct_status = "Error"
+        direct_content = str(e)
+    
+    # Test 2: Free proxy service (cors-anywhere)
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            proxy_url = f"https://cors-anywhere.herokuapp.com/https://www.sgg.gov.ma/BulletinOfficiel.aspx"
+            response = await client.get(proxy_url)
+            proxy_status = response.status_code
+            proxy_content = len(response.text) if response.status_code == 200 else "Failed"
+    except Exception as e:
+        proxy_status = "Error"
+        proxy_content = str(e)
+    
+    # Test 3: Another free proxy (allorigins)
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            proxy_url = f"https://api.allorigins.win/get?url={httpx.URL('https://www.sgg.gov.ma/BulletinOfficiel.aspx')}"
+            response = await client.get(proxy_url)
+            allorigins_status = response.status_code
+            allorigins_content = len(response.text) if response.status_code == 200 else "Failed"
+    except Exception as e:
+        allorigins_status = "Error"
+        allorigins_content = str(e)
+    
+    return {
+        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "direct_access": {
+            "status": direct_status,
+            "content_length": direct_content
+        },
+        "cors_anywhere_proxy": {
+            "status": proxy_status,
+            "content_length": proxy_content
+        },
+        "allorigins_proxy": {
+            "status": allorigins_status,
+            "content_length": allorigins_content
+        },
+        "recommendation": "Check which proxy works best for your use case"
+    }
+
 # Health check endpoint
 @app.get("/health")
 async def health_check():
