@@ -8,6 +8,26 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import datetime
 
+# Proxy Configuration
+PROXY_CONFIG = {
+    "enabled": os.getenv("USE_PROXY", "false").lower() == "true",
+    "proxy_url": os.getenv("PROXY_URL", ""),
+    "proxy_type": os.getenv("PROXY_TYPE", "http"),  # http, https, socks5
+    "proxy_auth": {
+        "username": os.getenv("PROXY_USERNAME", ""),
+        "password": os.getenv("PROXY_PASSWORD", "")
+    },
+    "timeout": int(os.getenv("PROXY_TIMEOUT", "30")),
+    "fallback_proxies": [
+        "https://cors-anywhere.herokuapp.com/",
+        "https://api.allorigins.win/get?url=",
+        "https://thingproxy.freeboard.io/fetch/"
+    ]
+}
+
+# API Key configuration
+API_KEY = os.getenv("INTERNAL_API_KEY", "TESTAPIKEY")
+
 app = FastAPI(title="SGG Bulletin Officiel API", version="1.0.0")
 
 # Add CORS middleware
@@ -21,7 +41,6 @@ app.add_middleware(
 
 # Security setup
 security = HTTPBearer(auto_error=False)
-API_KEY = os.getenv("INTERNAL_API_KEY", "TESTAPIKEY")
 
 async def verify_api_key(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> bool:
     """Verify API key for internal endpoints"""
@@ -48,6 +67,71 @@ def load_bulletins_from_file() -> Dict[str, Any]:
         return {"bulletins": {"FR": [], "AR": []}}
     except json.JSONDecodeError:
         return {"bulletins": {"FR": [], "AR": []}}
+
+# Proxy utility function
+async def make_proxy_request(url: str, use_fallback: bool = True) -> Dict[str, Any]:
+    """Make a request through configured proxy or fallback proxies"""
+    import httpx
+    
+    # If custom proxy is configured and enabled
+    if PROXY_CONFIG["enabled"] and PROXY_CONFIG["proxy_url"]:
+        try:
+            proxies = {
+                "http": f"{PROXY_CONFIG['proxy_type']}://{PROXY_CONFIG['proxy_url']}",
+                "https": f"{PROXY_CONFIG['proxy_type']}://{PROXY_CONFIG['proxy_url']}"
+            }
+            
+            # Add authentication if provided
+            auth = None
+            if PROXY_CONFIG["proxy_auth"]["username"] and PROXY_CONFIG["proxy_auth"]["password"]:
+                auth = (PROXY_CONFIG["proxy_auth"]["username"], PROXY_CONFIG["proxy_auth"]["password"])
+            
+            async with httpx.AsyncClient(
+                proxies=proxies, 
+                auth=auth, 
+                timeout=PROXY_CONFIG["timeout"]
+            ) as client:
+                response = await client.get(url)
+                return {
+                    "status": response.status_code,
+                    "content": response.text if response.status_code == 200 else "Failed",
+                    "proxy_used": f"Custom: {PROXY_CONFIG['proxy_url']}"
+                }
+        except Exception as e:
+            if not use_fallback:
+                return {"status": "Error", "content": str(e), "proxy_used": f"Custom: {PROXY_CONFIG['proxy_url']}"}
+    
+    # Try fallback proxies if custom proxy fails or is not configured
+    if use_fallback:
+        for i, fallback_proxy in enumerate(PROXY_CONFIG["fallback_proxies"]):
+            try:
+                if "allorigins" in fallback_proxy:
+                    # Special handling for allorigins
+                    proxy_url = f"{fallback_proxy}{httpx.URL(url)}"
+                    async with httpx.AsyncClient(timeout=15.0) as client:
+                        response = await client.get(proxy_url)
+                        if response.status_code == 200:
+                            data = response.json()
+                            if data.get("contents"):
+                                return {
+                                    "status": 200,
+                                    "content": data["contents"],
+                                    "proxy_used": f"Fallback {i+1}: {fallback_proxy}"
+                                }
+                else:
+                    # Standard proxy handling
+                    proxy_url = f"{fallback_proxy}{url}"
+                    async with httpx.AsyncClient(timeout=15.0) as client:
+                        response = await client.get(proxy_url)
+                        return {
+                            "status": response.status_code,
+                            "content": response.text if response.status_code == 200 else "Failed",
+                            "proxy_used": f"Fallback {i+1}: {fallback_proxy}"
+                        }
+            except Exception as e:
+                continue
+    
+    return {"status": "Error", "content": "All proxy options failed", "proxy_used": "None"}
 
 # Filter by year helper function
 def filter_by_year(bulletins: List[Dict[str, Any]], year: str) -> List[Dict[str, Any]]:
@@ -1073,8 +1157,7 @@ async def refresh_database_internal(api_key: bool = Depends(require_api_key)):
 
 @app.get("/api/test-proxy")
 async def test_proxy():
-    """Test proxy functionality with free proxy services"""
-    import httpx
+    """Test proxy functionality with configurable proxy and fallback options"""
     
     # Test 1: Direct access (should fail from Vercel)
     try:
@@ -1086,43 +1169,97 @@ async def test_proxy():
         direct_status = "Error"
         direct_content = str(e)
     
-    # Test 2: Free proxy service (cors-anywhere)
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            proxy_url = f"https://cors-anywhere.herokuapp.com/https://www.sgg.gov.ma/BulletinOfficiel.aspx"
-            response = await client.get(proxy_url)
-            proxy_status = response.status_code
-            proxy_content = len(response.text) if response.status_code == 200 else "Failed"
-    except Exception as e:
-        proxy_status = "Error"
-        proxy_content = str(e)
+    # Test 2: Configured proxy (if enabled)
+    if PROXY_CONFIG["enabled"] and PROXY_CONFIG["proxy_url"]:
+        proxy_result = await make_proxy_request("https://www.sgg.gov.ma/BulletinOfficiel.aspx", use_fallback=False)
+        configured_proxy = {
+            "status": proxy_result["status"],
+            "content_length": len(proxy_result["content"]) if proxy_result["status"] == 200 else "Failed",
+            "proxy_used": proxy_result["proxy_used"]
+        }
+    else:
+        configured_proxy = {
+            "status": "Not Configured",
+            "content_length": "N/A",
+            "proxy_used": "No proxy configured"
+        }
     
-    # Test 3: Another free proxy (allorigins)
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            proxy_url = f"https://api.allorigins.win/get?url={httpx.URL('https://www.sgg.gov.ma/BulletinOfficiel.aspx')}"
-            response = await client.get(proxy_url)
-            allorigins_status = response.status_code
-            allorigins_content = len(response.text) if response.status_code == 200 else "Failed"
-    except Exception as e:
-        allorigins_status = "Error"
-        allorigins_content = str(e)
+    # Test 3: Fallback proxies
+    fallback_result = await make_proxy_request("https://www.sgg.gov.ma/BulletinOfficiel.aspx", use_fallback=True)
+    fallback_proxy = {
+        "status": fallback_result["status"],
+        "content_length": len(fallback_result["content"]) if fallback_result["status"] == 200 else "Failed",
+        "proxy_used": fallback_result["proxy_used"]
+    }
     
     return {
         "timestamp": datetime.datetime.utcnow().isoformat(),
+        "proxy_config": {
+            "enabled": PROXY_CONFIG["enabled"],
+            "proxy_url": PROXY_CONFIG["proxy_url"] if PROXY_CONFIG["enabled"] else "Not set",
+            "proxy_type": PROXY_CONFIG["proxy_type"],
+            "timeout": PROXY_CONFIG["timeout"]
+        },
         "direct_access": {
             "status": direct_status,
             "content_length": direct_content
         },
-        "cors_anywhere_proxy": {
-            "status": proxy_status,
-            "content_length": proxy_content
+        "configured_proxy": configured_proxy,
+        "fallback_proxy": fallback_proxy,
+        "recommendation": "Set USE_PROXY=true and PROXY_URL to use custom proxy, or rely on fallback proxies"
+    }
+
+@app.get("/api/test-sgg-proxy")
+async def test_sgg_proxy():
+    """Test SGG website access through configured proxy system"""
+    
+    target_url = "https://www.sgg.gov.ma/BulletinOfficiel.aspx"
+    
+    # Test through proxy system
+    proxy_result = await make_proxy_request(target_url, use_fallback=True)
+    
+    # Extract ModuleId and TabId if successful
+    module_id = None
+    tab_id = None
+    if proxy_result["status"] == 200:
+        content = proxy_result["content"]
+        # Search for ModuleId and TabId
+        import re
+        module_match = re.search(r'ModuleId\s*=\s*(\d+)', content)
+        tab_match = re.search(r'TabId\s*=\s*(\d+)', content)
+        
+        if module_match:
+            module_id = module_match.group(1)
+        if tab_match:
+            tab_id = tab_match.group(1)
+    
+    return {
+        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "target_url": target_url,
+        "proxy_result": {
+            "status": proxy_result["status"],
+            "content_length": len(proxy_result["content"]) if proxy_result["status"] == 200 else "Failed",
+            "proxy_used": proxy_result["proxy_used"]
         },
-        "allorigins_proxy": {
-            "status": allorigins_status,
-            "content_length": allorigins_content
+        "extracted_data": {
+            "module_id": module_id,
+            "tab_id": tab_id
         },
-        "recommendation": "Check which proxy works best for your use case"
+        "success": proxy_result["status"] == 200 and module_id is not None and tab_id is not None
+    }
+
+@app.get("/api/proxy-config")
+async def get_proxy_config():
+    """Get current proxy configuration (without sensitive data)"""
+    return {
+        "enabled": PROXY_CONFIG["enabled"],
+        "proxy_url": PROXY_CONFIG["proxy_url"] if PROXY_CONFIG["enabled"] else "Not configured",
+        "proxy_type": PROXY_CONFIG["proxy_type"],
+        "timeout": PROXY_CONFIG["timeout"],
+        "has_auth": bool(PROXY_CONFIG["proxy_auth"]["username"] and PROXY_CONFIG["proxy_auth"]["password"]),
+        "fallback_proxies_count": len(PROXY_CONFIG["fallback_proxies"]),
+        "fallback_proxies": PROXY_CONFIG["fallback_proxies"],
+        "instructions": "Set environment variables to configure proxy. See env.template for examples."
     }
 
 # Health check endpoint
