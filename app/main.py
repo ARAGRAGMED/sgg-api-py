@@ -857,13 +857,12 @@ async def root():
                 } else {
                     displayListResults(filteredData);
                 }
-
-                resultsDiv.style.display = 'block';
             }
 
             // Display grid results
             function displayGridResults(data) {
                 resultsDiv.className = 'bulletin-grid';
+                resultsDiv.style.display = 'grid';
                 resultsDiv.innerHTML = data.map(item => {
                     // Determine language for each item based on data source
                     let langLabel, langColor;
